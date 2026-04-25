@@ -1,105 +1,141 @@
 from __future__ import division
 import string
-from stemming.porter2 import stem
-from string import digits
 import re
 import time
-from Stemmed_Stopwords_Removed_Index import TermVector
+from nltk.stem import PorterStemmer
 from collections import OrderedDict
 import dill
 
+stemmer = PorterStemmer()
+
+# =========================
+# UNPICKLER
+# =========================
 def unpickler(file):
-    f = open(file, 'rb')
-    ds = dill.load(f)
-    f.close()
-    return ds
+    with open(file, 'rb') as f:
+        return dill.load(f)
 
-def parseCatalog(file):
-    catalog = {}
-    catalogFile = open(file, 'r')
-    for line in catalogFile.readlines():
-        content = line.strip().split(',')
-        catalog[content[0]] = content[1:]
-    return catalog
-
+# =========================
+# READ QUERIES
+# =========================
 def queryMaker():
-    f = open('QueryUpdated.txt', 'r')
-    queries = []
-    for line in f:
-        queries.append(re.sub('[\-\.\"\s]+', ' ', line).strip().translate(None, digits))
+    with open('QueryUpdated.txt', 'r', encoding='utf-8') as f:
+        queries = []
+        for line in f:
+            line = re.sub(r'[\-\.\"\s]+', ' ', line)
+            line = re.sub(r'\d+', '', line)
+            queries.append(line.strip())
     return queries
 
+# =========================
+# STOPWORD REMOVAL
+# =========================
 def queryProcessor(query):
-    with open("/Users/Zion/Downloads/AP_DATA/stoplist.txt") as sfile:
-        stopWords = sfile.readlines()
-    stopWords = filter(None, stopWords)
-    keywords = ""
-    flag = 0
-    for word in query.split():
-        for sWord in stopWords:
-            if (word == sWord.strip()):
-                flag = 1
-                break
-        if (flag != 1):
-            keywords += word + " "
-        flag = 0
-    keywords = keywords.translate(None, string.punctuation)
-    return keywords.strip()
+    with open("Files/Stemmed/stoplist.txt", "r", encoding='utf-8') as f:
+        stopWords = set([line.strip() for line in f])
 
+    keywords = []
+
+    for word in query.lower().split():
+        if word not in stopWords and word not in string.punctuation:
+            keywords.append(word)
+
+    return " ".join(keywords)
+
+# =========================
+# GET DOC INFO
+# =========================
 def getInfo(key, catalog, termMap, docMap):
     keyInfo = OrderedDict()
     invList = OrderedDict()
     docDict = OrderedDict()
-    indexFile = open("Files/Stemmed/invertedFile0.txt", 'r')
-    offset = catalog.get(key)[0]
+
+    indexFile = open("Files/Stemmed/invertedFile0.txt", 'r', encoding='utf-8')
+
+    offset = catalog.get(key, [None])[0]
+    if offset is None:
+        return {}, {}
+
     indexFile.seek(int(offset))
     line = indexFile.readline()
-    df = line.split(':')[0].split(',')[1]
-    ttf = line.split(':')[0].split(',')[2]
+
+    parts = line.split(':')
+
+    df = parts[0].split(',')[1]
+    ttf = parts[0].split(',')[2]
+
     keyInfo[key] = [df, ttf]
-    remStr = line.split(':')[1].split(';')
+
+    remStr = parts[1].split(';')
+
     for item in remStr:
-        docno = item.split(',')[0]
+        if item.strip() == "":
+            continue
+
+        values = item.split(',')
+
+        docno = values[0]
         docID = docMap.get(int(docno))
-        tf = int(item.split(',')[1])
-        pos = [int(e) for e in item.split(',')[2:len(item.split(','))]]
-        docDict[docID] = TermVector(tf, pos)
+        tf = int(values[1])
+        pos = list(map(int, values[2:]))
+
+        docDict[docID] = (tf, pos)
+
     invList[key] = docDict
+
     indexFile.close()
     return invList, keyInfo
 
+# =========================
+# BUILD TERM VECTOR
+# =========================
 def getParameters(query, qNo):
     keywords = queryProcessor(query)
+
     termVector = OrderedDict()
     termStats = OrderedDict()
+
     for key in keywords.split():
-        key = stem(key).lower()
-        invList, keyInfo= getInfo(key, catalog, termMap, docMap)
+
+        # ✔ FIXED STEMMING
+        key = stemmer.stem(key.lower())
+
+        invList, keyInfo = getInfo(key, catalog, termMap, docMap)
+
         termVector.update(invList)
         termStats.update(keyInfo)
-    f = open('Files/Stemmed/Pickles/termStats%s.p' % qNo, 'wb')
-    dill.dump(termStats, f)
-    f.close()
-    f = open('Files/Stemmed/Pickles/termVector%s.p' % qNo, 'wb')
-    dill.dump(termVector, f)
-    f.close()
 
+    # save pickles
+    with open(f'Files/Stemmed/Pickles/termStats{qNo}.p', 'wb') as f:
+        dill.dump(termStats, f)
+
+    with open(f'Files/Stemmed/Pickles/termVector{qNo}.p', 'wb') as f:
+        dill.dump(termVector, f)
+
+# =========================
+# MAIN
+# =========================
 start_time = time.time()
+
 docInfo = unpickler('Files/Stemmed/Pickles/docInfo.p')
-catalog = parseCatalog('Files/Stemmed/catalogFile.txt')
+catalog = unpickler('Files/Stemmed/Pickles/catalog.p')
 termMap = unpickler('Files/Stemmed/Pickles/termMap.p')
 docMap = unpickler('Files/Stemmed/Pickles/docMap.p')
-# getInfo('govern', catalog, termMap, docMap)
+
 queries = queryMaker()
-qNo = 0
-for query in queries:
-    qNo += 1
+
+for qNo, query in enumerate(queries, 1):
     getParameters(query, qNo)
-    print("Created %d termVector" % qNo)
+    print(f"Created {qNo} termVector")
+
+# =========================
+# TIME OUTPUT
+# =========================
 temp = time.time() - start_time
-print(temp)
+
 hours = temp // 3600
 temp = temp - 3600 * hours
 minutes = temp // 60
 seconds = temp - 60 * minutes
+
 print('%d:%d:%d' % (hours, minutes, seconds))

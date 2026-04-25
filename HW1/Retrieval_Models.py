@@ -1,179 +1,219 @@
-from __future__ import division
 from elasticsearch import Elasticsearch
 from elasticsearch_dsl import Search
 import math
 from operator import itemgetter
-import string
-import dill
+from collections import defaultdict
+import urllib3
 
-es = Elasticsearch()
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# =========================
+# CONNECT
+# =========================
+es = Elasticsearch(
+    "https://localhost:9200",
+    basic_auth=("elastic", "1pmpURwe_KTV*f0UZdXR"),
+    verify_certs=False
+)
+
+INDEX = "cranfield"
+
+# =========================
+# LOAD GLOBAL STATS
+# =========================
+
+def compute_stats():
+    total_len = 0
+    vocab = set()
+    D = 0
+
+    for hit in es.search(index="cranfield", query={"match_all": {}}, size=10000)["hits"]["hits"]:
+        source = hit["_source"]
+
+        text = source["body_text"]
+        doc_len = source["doc_len"]
+
+        total_len += doc_len
+        vocab.update(text.split())
+        D += 1
+
+    avgDocLen = total_len / D
+    V = len(vocab)
+
+    return D, avgDocLen, V
 
 
-s = Search().using(es).query("match_all")
-s.aggs.bucket("avg_size", "avg", field="doc_len")
-s.aggs.bucket("vocabSize", "cardinality", field="text")
-res = s.execute()
-D = 84678
-avgDocLen = 20969809/84660 #res.aggregations.avg_size.value
-V = res.aggregations.vocabSize.value
-print(V)
 
-def Total_okapiTF(qNo, termVector):
-    docScore = []
-    for docid in termVector:
-        tf = 0
-        for key in termVector[docid]:
-            tfwd = termVector[docid][key][0]
-            docLen = termVector[docid][key][1]
-            tftemp = (tfwd/(tfwd + 0.5 + (1.5 * (docLen/avgDocLen))))
-            tf += (tfwd/(tfwd + 0.5 + (1.5 * (docLen/avgDocLen))))
-        docScore.append([docid, tf])
-    docScore.sort(key=itemgetter(1), reverse=True)
-    with open('/Users/Zion/Desktop/Desktop - Zion/NEU/Sem 2/Information Retrieval/HW6/OkapiTF_Results_File.txt', 'a+') as queryResults:
-        rank = 1
-        for ds in docScore:
-            queryResults.write('%d Q0 %s %d %lf Exp\n' % (int(qNo), ds[0], rank, ds[1]))
-            # if rank == 1000:
-            #         break
-            rank += 1
 
-def TF_IDF(qNo, termVector, docFreq):
-    docScore = []
-    for docid in termVector:
-        tf = 0
-        for key in termVector[docid]:
-            tfwd = termVector[docid][key][0]
-            docLen = termVector[docid][key][1]
-            tf += ((tfwd / (tfwd + 0.5 + (1.5 * (docLen / avgDocLen)))) * (math.log10(D/list(filter(lambda x:x[0]==key, docFreq))[0][1])))
-        docScore.append([docid, tf])
-    docScore.sort(key=itemgetter(1), reverse=True)
-    with open('/Users/Zion/Desktop/Desktop - Zion/NEU/Sem 2/Information Retrieval/HW6/TF-IDF_Results_File.txt', 'a+') as queryResults:
-        rank = 1
-        for ds in docScore:
-            queryResults.write('%s Q0 %s %d %lf Exp\n' % (qNo, ds[0], rank, ds[1]))
-            # if rank == 1000:
-            #     break
-            rank += 1
+D, avgDocLen, V = compute_stats()
 
-def Okapi_BM25(qNo, termVector, docFreq):
-    k1 = 1.2
-    k2 = 1.2
-    b = 0.75
-    docScore = []
-    for docid in termVector:
-        bm25 = 0
-        for key in termVector[docid]:
-            tfwd = termVector[docid][key][0]
-            docLen = termVector[docid][key][1]
-            df = list(filter(lambda x:x[0]==key, docFreq))[0][1]
-            op1 = (math.log10((D+0.5)/(df+0.5)))
-            op2 = ((tfwd + (k1*tfwd))/(tfwd+(k1*((1-b)+(b*(docLen/avgDocLen))))))
-            op3 = ((tfwd + (k2 * tfwd))/(tfwd + k2))
-            bm25 += op1 * op2 * op3
-        docScore.append([docid, bm25])
-    docScore.sort(key=itemgetter(1), reverse=True)
-    with open('/Users/Zion/Desktop/Desktop - Zion/NEU/Sem 2/Information Retrieval/HW6/OkapiBM25_Results_File.txt', 'a+') as queryResults:
-        rank = 1
-        for ds in docScore:
-            queryResults.write('%s Q0 %s %d %lf Exp\n' % (qNo, ds[0], rank, ds[1]))
-            # if rank == 1000:
-            #     break
-            rank += 1
+print("Documents:", D)
+print("Avg Doc Length:", avgDocLen)
+print("Vocabulary Size:", V)
 
-def UnigramLM_Laplace(qNo, termVector):
-    keys = set()
-    for doc_id in termVector:
-        for key in termVector[doc_id]:
-            keys.add(key)
-    keys = list(keys)
-
-    docScoreDict = {}
-    for word in keys:
-        for docid in termVector:
-            dict = termVector[docid]
-            if word in dict:
-                tfwd = dict[word][0]
-                docLen = dict[word][1]
-                score = float(tfwd + 1) / float(docLen + V)
-            else:
-                docLen = dict[dict.keys()[0]][1]
-                score = float(1) / float(docLen + V)
-            if docid not in docScoreDict:
-                docScoreDict[docid] = 0.0
-            docScoreDict[docid] += math.log(score)
-    DocScore = []
-    for score_key in docScoreDict.keys():
-        DocScore.append((score_key, docScoreDict[score_key]))
-    DocScore.sort(key=itemgetter(1), reverse=True)
-
-    with open('/Users/Zion/Desktop/Desktop - Zion/NEU/Sem 2/Information Retrieval/HW6/UnigramLMLaplace_Results_File.txt', 'a+') as queryResults:
-        rank = 1
-        for ds in DocScore:
-            queryResults.write('%s Q0 %s %d %f Exp\n' % (qNo, ds[0], rank, ds[1]))
-            # if rank == 1000:
-            #     break
-            rank += 1
-
-def UnigramLM_JelinekMercer(qNo, termVector):
-    keys = set()
-    for doc_id in termVector:
-        for key in termVector[doc_id]:
-            keys.add(key)
-    keys = list(keys)
-    l = 0.8
-    docScoreDict = {}
-    for word in keys:
-        for docid in termVector:
-            dict = termVector[docid]
-            if word in dict:
-                tfwd = dict[word][0]
-                docLen = dict[word][1]
-                pML = (filter(lambda x: x[1] == word, cTF)[0][0]) / V
-                score = float(l * float(tfwd / docLen)) + (float(1 - l) * pML)
-            else:
-                docLen = dict[dict.keys()[0]][1]
-                pML = (filter(lambda x: x[1] == word, cTF)[0][0]) / V
-                score = (float(1 - l) * pML)
-            if docid not in docScoreDict:
-                docScoreDict[docid] = 0.0
-            docScoreDict[docid] += math.log(score)
-    DocScore = []
-    for score_key in docScoreDict.keys():
-        DocScore.append((score_key, docScoreDict[score_key]))
-    DocScore.sort(key=itemgetter(1), reverse=True)
-    with open('/Users/Zion/Desktop/Desktop - Zion/NEU/Sem 2/Information Retrieval/HW6/UnigramLMJM_Results_File.txt', 'a+') as queryResults:
-        rank = 1
-        for ds in DocScore:
-            queryResults.write('%s Q0 %s %d %lf Exp\n' % (qNo, ds[0], rank, ds[1]))
-            # if rank == 1000:
-            #     break
-            rank += 1
-
+# =========================
+# QUERY PROCESSOR
+# =========================
 def queryNums():
-    f = open('Files/QueryUpdated.txt', 'r')
     queries = []
-    for line in f:
-        queries.append(line.split()[0].translate(None, string.punctuation))
+    query = ""
+
+    with open(r"C:\Users\User\Information-Retrieval\cran.qry", "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+
+            if line.startswith(".I"):
+                if query:
+                    queries.append(query)
+                    query = ""
+            elif line.startswith(".W"):
+                continue
+            else:
+                query += " " + line
+
+        if query:
+            queries.append(query)
+
     return queries
 
-qNums = queryNums()
-i = 0
-f = open('Pickles/totalTF.p', 'rb')
-cTF = dill.load(f)
-f.close()
-for qNo in qNums:
-    i += 1
-    # if i == 1:
-    f = open('Pickles/docFreq%s.p' % i, 'rb')
-    docFreq = dill.load(f)
-    f.close()
-    f = open('Pickles/termVector%s.p' % i, 'rb')
-    termVector = dill.load(f)
-    f.close()
-    print("Running Query %d out of 25" % i)
-    Total_okapiTF(qNo, termVector)
-    TF_IDF(qNo, termVector, docFreq)
-    Okapi_BM25(qNo, termVector, docFreq)
-    UnigramLM_Laplace(qNo, termVector)
-    UnigramLM_JelinekMercer(qNo, termVector)
-print("Done!")
+
+# =========================
+# GET DOCS FOR TERM
+# =========================
+def getDocs(term):
+    s = Search().using(es).index(INDEX).query("match", body_text=term)
+    return [hit.meta.id for hit in s.scan()]
+
+
+# =========================
+# TERM VECTOR BUILDER
+# =========================
+def build_term_vector(query):
+    termVector = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+
+    terms = query.lower().split()
+
+    for term in terms:
+        docs = getDocs(term)
+
+        for docid in docs:
+            res = es.termvectors(
+                index=INDEX,
+                id=docid,
+                fields=["body_text"],
+                term_statistics=False
+            )
+
+            try:
+                tf = res["term_vectors"]["body_text"]["terms"][term]["term_freq"]
+            except:
+                tf = 0
+
+            doc_len = es.get(index=INDEX, id=docid)["_source"]["doc_len"]
+
+            termVector[docid][term] = [tf, doc_len]
+
+    return termVector
+
+
+# =========================
+# OKAPI TF
+# =========================
+def okapi_tf(termVector, qNo):
+    scores = []
+
+    for docid in termVector:
+        score = 0
+
+        for term in termVector[docid]:
+            tf, docLen = termVector[docid][term]
+
+            score += tf / (tf + 0.5 + 1.5 * (docLen / avgDocLen))
+
+        scores.append((docid, score))
+
+    scores.sort(key=itemgetter(1), reverse=True)
+
+    return scores[:100]
+
+
+# =========================
+# TF-IDF
+# =========================
+def tfidf(termVector, docFreq, qNo):
+    df = dict(docFreq)
+    scores = []
+
+    for docid in termVector:
+        score = 0
+
+        for term in termVector[docid]:
+            tf, docLen = termVector[docid][term]
+            df_t = df.get(term, 1)
+
+            tf_norm = tf / (tf + 0.5 + 1.5 * (docLen / avgDocLen))
+            idf = math.log10(D / df_t)
+
+            score += tf_norm * idf
+
+        scores.append((docid, score))
+
+    scores.sort(key=itemgetter(1), reverse=True)
+
+    return scores[:100]
+
+
+# =========================
+# BM25
+# =========================
+def bm25(termVector, docFreq):
+    k1, k2, b = 1.2, 1.2, 0.75
+    df = dict(docFreq)
+    scores = []
+
+    for docid in termVector:
+        score = 0
+
+        for term in termVector[docid]:
+            tf, docLen = termVector[docid][term]
+            df_t = df.get(term, 1)
+
+            idf = math.log((D + 0.5) / (df_t + 0.5))
+
+            part1 = (tf * (k1 + 1)) / (tf + k1 * ((1 - b) + b * (docLen / avgDocLen)))
+            part2 = (tf * (k2 + 1)) / (tf + k2)
+
+            score += idf * part1 * part2
+
+        scores.append((docid, score))
+
+    scores.sort(key=itemgetter(1), reverse=True)
+
+    return scores[:100]
+
+def save_results(filename, qNo, results):
+    with open(filename, "w") as f:
+
+        for rank, (docid, score) in enumerate(results[:100], 1):
+            f.write(f"{qNo} Q0 {docid} {rank} {float(score)} Exp\n")
+
+
+
+# =========================
+# MAIN LOOP
+# =========================
+queries = queryNums()
+for qNo, query in enumerate(queries, 1):
+
+    termVector = build_term_vector(query)
+
+    okapi_results = okapi_tf(termVector, qNo)
+    tfidf_results = tfidf(termVector, [], qNo)
+    bm25_results = bm25(termVector, [])
+
+    save_results("OKAPI_results.txt", qNo, okapi_results)
+    save_results("TFIDF_results.txt", qNo, tfidf_results)
+    save_results("BM25_results.txt", qNo, bm25_results)
+
+    print(f"Query {qNo} done")
+

@@ -1,6 +1,8 @@
 
 def retriveDocs(k):
-    f = open('Files/OkapiBM25_Results_File.txt', 'r')
+    f = open('C:/Users/User/Information-Retrieval/BM25_results.txt', 'r')
+
+
     docNo = []
     i = 0
     for line in f:
