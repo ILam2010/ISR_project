@@ -1,105 +1,141 @@
-from __future__ import division
-import string
-from stemming.porter2 import stem
-from string import digits
 import re
-import time
-from Stemmed_Stopwords_Removed_Index import TermVector
-from collections import OrderedDict
+import string
 import dill
+import time
+from collections import defaultdict
 
-def unpickler(file):
-    f = open(file, 'rb')
-    ds = dill.load(f)
-    f.close()
-    return ds
+# =========================
+# LOAD FILES
+# =========================
 
-def parseCatalog(file):
-    catalog = {}
-    catalogFile = open(file, 'r')
-    for line in catalogFile.readlines():
-        content = line.strip().split(',')
-        catalog[content[0]] = content[1:]
-    return catalog
+def load(file):
+    with open(file, "rb") as f:
+        return dill.load(f)
 
-def queryMaker():
-    f = open('QueryUpdated.txt', 'r')
-    queries = []
-    for line in f:
-        queries.append(re.sub('[\-\.\"\s]+', ' ', line).strip().translate(None, digits))
-    return queries
+
+print("Loading index files...")
+
+inverted_index = load("inverted_index.p")
+termMap = load("termMap.p")
+docMap = load("docMap.p")
+
+# stopwords
+with open(r"C:\Users\User\Information-Retrieval\HW2\stoplist.txt", "r", encoding="utf-8") as f:
+    stopwords = set([line.strip().lower() for line in f])
+
+reverse_docMap = {v: k for k, v in docMap.items()}
+
+print("Files loaded successfully!")
+
+
+# =========================
+# TOKENIZER
+# =========================
 
 def queryProcessor(query):
-    with open("/Users/Zion/Downloads/AP_DATA/stoplist.txt") as sfile:
-        stopWords = sfile.readlines()
-    stopWords = filter(None, stopWords)
-    keywords = ""
-    flag = 0
-    for word in query.split():
-        for sWord in stopWords:
-            if (word == sWord.strip()):
-                flag = 1
-                break
-        if (flag != 1):
-            keywords += word + " "
-        flag = 0
-    keywords = keywords.translate(None, string.punctuation)
-    return keywords.strip()
+    query = query.lower()
+    query = query.translate(str.maketrans('', '', string.punctuation))
+    tokens = query.split()
+    return [w for w in tokens if w not in stopwords]
 
-def getInfo(key, catalog, termMap, docMap):
-    keyInfo = OrderedDict()
-    invList = OrderedDict()
-    docDict = OrderedDict()
-    indexFile = open("Files/Unstemmed/invertedFile0.txt", 'r')
-    offset = catalog.get(key)[0]
-    indexFile.seek(int(offset))
-    line = indexFile.readline()
-    df = line.split(':')[0].split(',')[1]
-    ttf = line.split(':')[0].split(',')[2]
-    keyInfo[key] = [df, ttf]
-    remStr = line.split(':')[1].split(';')
-    for item in remStr:
-        docno = item.split(',')[0]
-        docID = docMap.get(int(docno))
-        tf = int(item.split(',')[1])
-        pos = [int(e) for e in item.split(',')[2:len(item.split(','))]]
-        docDict[docID] = TermVector(tf, pos)
-    invList[key] = docDict
-    indexFile.close()
-    return invList, keyInfo
 
-def getParameters(query, qNo):
-    keywords = queryProcessor(query)
-    termVector = OrderedDict()
-    termStats = OrderedDict()
-    for key in keywords.split():
-        key = key.lower()
-        invList, keyInfo= getInfo(key, catalog, termMap, docMap)
-        termVector.update(invList)
-        termStats.update(keyInfo)
-    f = open('Files/Unstemmed/Pickles/termStats%s.p' % qNo, 'wb')
-    dill.dump(termStats, f)
-    f.close()
-    f = open('Files/Unstemmed/Pickles/termVector%s.p' % qNo, 'wb')
-    dill.dump(termVector, f)
-    f.close()
+# =========================
+# BUILD TERM VECTOR FOR QUERY
+# =========================
+
+def build_query_vector(query_tokens):
+
+    termVector = {}
+
+    for token in query_tokens:
+
+        if token not in termMap:
+            continue
+
+        term_id = termMap[token]
+
+        if term_id not in inverted_index:
+            continue
+
+        postings = inverted_index[term_id]["postings"]
+
+        termVector[token] = {}
+
+        for p in postings:
+            doc_id = p["doc_id"]
+            tf = p["tf"]
+            positions = p["positions"]
+
+            termVector[token][doc_id] = (tf, positions)
+
+    return termVector
+
+
+# =========================
+# SIMPLE VSM (baseline)
+# =========================
+
+def vsm(termVector):
+
+    scores = defaultdict(int)
+
+    for term in termVector:
+        for doc in termVector[term]:
+            tf, _ = termVector[term][doc]
+            scores[doc] += tf
+
+    return sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+
+# =========================
+# QUERY SEARCH ENGINE
+# =========================
+
+def search(query):
+
+    tokens = queryProcessor(query)
+
+    termVector = build_query_vector(tokens)
+
+    results = vsm(termVector)
+
+    return results
+
+
+# =========================
+# MAIN
+# =========================
 
 start_time = time.time()
-docInfo = unpickler('Files/Unstemmed/Pickles/docInfo.p')
-catalog = parseCatalog('Files/Unstemmed/catalogFile.txt')
-termMap = unpickler('Files/Unstemmed/Pickles/termMap.p')
-docMap = unpickler('Files/Unstemmed/Pickles/docMap.p')
-# getInfo('govern', catalog, termMap, docMap)
-queries = queryMaker()
-qNo = 0
-for query in queries:
+
+with open("cran.qry", "r", encoding="utf-8", errors="ignore") as f:
+    queries = f.readlines()
+
+qNo = 1
+
+for q in queries:
+
+    q = q.strip()
+
+    # skip Cranfield headers
+    if not q or q.startswith("."):
+        continue
+
+    results = search(q)
+
+    print(f"\nQuery {qNo}: {q}")
+    print("Top results:")
+
+    for doc_id, score in results[:5]:
+        doc_name = reverse_docMap.get(doc_id, str(doc_id))
+        print(f"  {doc_name} -> {score}")
+
     qNo += 1
-    getParameters(query, qNo)
-    print("Created %d termVector" % qNo)
+
+
+# =========================
+# TIME
+# =========================
+
 temp = time.time() - start_time
-print(temp)
-hours = temp // 3600
-temp = temp - 3600 * hours
-minutes = temp // 60
-seconds = temp - 60 * minutes
-print('%d:%d:%d' % (hours, minutes, seconds))
+print("\nExecution time:", round(temp, 2), "seconds")

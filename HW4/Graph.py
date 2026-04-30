@@ -1,56 +1,30 @@
-from elasticsearch import Elasticsearch
-import time
-from elasticsearch_dsl import Search
-import Canonicalizer
+# Graph.py
 
-def scroller(docID):
-    for id in docID:
-        id = id.strip()
-        outlinks = set()
-        res = es.get(index="hw3_crawl", doc_type='document', id=id)
-        outlinks = set(res['_source'].get("outlinks").strip().split('\n'))
-        for ol in outlinks:
-            ol = ol.strip()
-            if ol in linkgraphTemp:
-                linkgraphTemp[ol].add(id)
-            else:
-                linkgraphTemp[ol] = set()
-                linkgraphTemp[ol].add(id)
+def read_graph(file):
+    graph = {}
 
-canon = Canonicalizer.Canonicalizer
-start_time = time.time()
-es = Elasticsearch()
-linkgraphTemp = {}
-linkGraph = {}
-sinkNodes = set()
-s = Search(using=es, index="hw3_crawl", doc_type='document')
-s = s.source([])
-docID = set(h.meta.id for h in s.scan())
-scroller(docID)
+    with open(file, "r") as f:
+        for line in f:
+            parts = line.strip().split()
+            if not parts:
+                continue
+
+            node = parts[0]
+            links = parts[1:]
+
+            graph[node] = links
+
+    return graph
 
 
-for ol in linkgraphTemp:
-    if ol in docID:
-        linkGraph[ol] = linkgraphTemp.get(ol)
-    if ol == '':
-        for link in linkgraphTemp.get(ol):
-            sinkNodes.add(link)
+def main():
+    # ✅ use REAL graph, not dummy
+    graph = read_graph("linkgraph.txt")
 
-print(sinkNodes)
-print(len(sinkNodes))
+    print("Graph loaded:")
+    for k, v in graph.items():
+        print(k, "->", v)
 
-outputFile = open("linkgraph.txt", "w")
-for ol in linkGraph:
-    line = ol
-    for il in linkGraph[ol]:
-        line += ' ' + il
-    outputFile.write(line +'\n')
-outputFile.close()
 
-temp = time.time()-start_time
-print(temp)
-hours = temp//3600
-temp = temp - 3600*hours
-minutes = temp//60
-seconds = temp - 60*minutes
-print('%d:%d:%d' %(hours,minutes,seconds))
+if __name__ == "__main__":
+    main()

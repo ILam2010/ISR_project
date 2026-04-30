@@ -1,16 +1,26 @@
-def score_evaluator(file_path):
+def read_file(file):
+    total = 0
+    count = 0
 
-    with open(file_path, 'r') as File:
-        score_holder = 0.0
-        for each_line in File:
-            # print each_line.split(' ')[1].strip('\n')
-            score_holder += float(each_line.split(' ')[1].strip('\n'))
-            # raw_input()
-        # print score_holder
-        return score_holder
+    with open(file, "r") as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) == 2:
+                total += float(parts[1])
+                count += 1
 
-# score =
+    return total, count
 
-hub_score = score_evaluator("hub.txt")
-# auth_score = score_evaluator(path_to_auth)
-print('Total hub score:', hub_score)
+
+def main():
+    pr_sum, pr_count = read_file("pagerank_results.txt")
+    hub_sum, hub_count = read_file("hub.txt")
+    auth_sum, auth_count = read_file("auth.txt")
+
+    print("PageRank sum:", pr_sum, " | nodes:", pr_count)
+    print("Hub sum:", hub_sum, " | nodes:", hub_count)
+    print("Authority sum:", auth_sum, " | nodes:", auth_count)
+
+
+if __name__ == "__main__":
+    main()

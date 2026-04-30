@@ -19,8 +19,8 @@ def unpickler(file):
 # READ QUERIES
 # =========================
 def queryMaker():
+    queries = []
     with open('QueryUpdated.txt', 'r', encoding='utf-8') as f:
-        queries = []
         for line in f:
             line = re.sub(r'[\-\.\"\s]+', ' ', line)
             line = re.sub(r'\d+', '', line)
@@ -32,15 +32,19 @@ def queryMaker():
 # =========================
 def queryProcessor(query):
     with open("Files/Stemmed/stoplist.txt", "r", encoding='utf-8') as f:
-        stopWords = set([line.strip() for line in f])
+        stopWords = set(line.strip() for line in f)
 
     keywords = []
 
     for word in query.lower().split():
-        if word not in stopWords and word not in string.punctuation:
+        if word not in stopWords:
             keywords.append(word)
 
-    return " ".join(keywords)
+    # remove punctuation AFTER joining
+    cleaned = " ".join(keywords)
+    cleaned = cleaned.translate(str.maketrans('', '', string.punctuation))
+
+    return cleaned.strip()
 
 # =========================
 # GET DOC INFO
@@ -50,14 +54,19 @@ def getInfo(key, catalog, termMap, docMap):
     invList = OrderedDict()
     docDict = OrderedDict()
 
-    indexFile = open("Files/Stemmed/invertedFile0.txt", 'r', encoding='utf-8')
-
-    offset = catalog.get(key, [None])[0]
-    if offset is None:
+    # 🔴 IMPORTANT: use termMap → catalog expects TERM ID, not term string
+    if key not in termMap:
         return {}, {}
 
-    indexFile.seek(int(offset))
-    line = indexFile.readline()
+    keyId = str(termMap[key])
+
+    if keyId not in catalog:
+        return {}, {}
+
+    with open("Files/Stemmed/invertedFile0.txt", 'r', encoding='utf-8') as indexFile:
+        offset = catalog[keyId][0]
+        indexFile.seek(int(offset))
+        line = indexFile.readline()
 
     parts = line.split(':')
 
@@ -69,21 +78,21 @@ def getInfo(key, catalog, termMap, docMap):
     remStr = parts[1].split(';')
 
     for item in remStr:
-        if item.strip() == "":
+        if not item.strip():
             continue
 
         values = item.split(',')
 
         docno = values[0]
-        docID = docMap.get(int(docno))
+        docID = docMap.get(int(docno), docno)
+
         tf = int(values[1])
-        pos = list(map(int, values[2:]))
+        pos = [int(p) for p in values[2:] if p]
 
         docDict[docID] = (tf, pos)
 
     invList[key] = docDict
 
-    indexFile.close()
     return invList, keyInfo
 
 # =========================
@@ -96,8 +105,6 @@ def getParameters(query, qNo):
     termStats = OrderedDict()
 
     for key in keywords.split():
-
-        # ✔ FIXED STEMMING
         key = stemmer.stem(key.lower())
 
         invList, keyInfo = getInfo(key, catalog, termMap, docMap)
@@ -118,7 +125,14 @@ def getParameters(query, qNo):
 start_time = time.time()
 
 docInfo = unpickler('Files/Stemmed/Pickles/docInfo.p')
-catalog = unpickler('Files/Stemmed/Pickles/catalog.p')
+
+# 🔴 FIX: catalog should NOT be unpickled (it's a text file in most setups)
+catalog = {}
+with open('Files/Stemmed/catalogFile.txt', 'r') as f:
+    for line in f:
+        parts = line.strip().split(',')
+        catalog[parts[0]] = parts[1:]
+
 termMap = unpickler('Files/Stemmed/Pickles/termMap.p')
 docMap = unpickler('Files/Stemmed/Pickles/docMap.p')
 
@@ -133,9 +147,9 @@ for qNo, query in enumerate(queries, 1):
 # =========================
 temp = time.time() - start_time
 
-hours = temp // 3600
-temp = temp - 3600 * hours
-minutes = temp // 60
-seconds = temp - 60 * minutes
+hours = int(temp // 3600)
+temp %= 3600
+minutes = int(temp // 60)
+seconds = int(temp % 60)
 
-print('%d:%d:%d' % (hours, minutes, seconds))
+print(f"{hours}:{minutes}:{seconds}")

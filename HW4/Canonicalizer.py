@@ -1,9 +1,8 @@
 """
  Written by Vinod Vishwanath
- as part of Information Retrieval
- - Summer 1 2017
- - Northeastern University
+ Adapted for Python 3
 """
+
 from urllib.parse import urlparse
 
 
@@ -11,38 +10,44 @@ class Canonicalizer:
 
     @staticmethod
     def get_domain(url, include_scheme=True):
-
         parse = urlparse(url)
+
+        # Force scheme to http and normalize
         parse = parse._replace(scheme='http')
         scheme = parse.scheme.lower()
         domain = parse.netloc.lower()
-        clean_domain = Canonicalizer.clean_domain(domain, scheme=scheme)
+
+        clean_domain = Canonicalizer.clean_domain(domain, scheme)
 
         if include_scheme:
-            return scheme + '://' + clean_domain
+            return f"{scheme}://{clean_domain}"
         else:
-            return domain
+            return clean_domain
 
     @staticmethod
     def is_relative_url(url):
-
         parse = urlparse(url)
-
         return parse.netloc == ''
 
     @staticmethod
     def canonicalize(url, domain=None):
 
+        # Handle relative URLs
         if domain is not None:
-            url = domain.strip('/') + '/' + url
+            url = domain.rstrip('/') + '/' + url.lstrip('/')
 
         parse = urlparse(url)
-        output = ''
+
+        # Normalize scheme
         parse = parse._replace(scheme='http')
-        output += parse.scheme.lower() + '://'
-        output += Canonicalizer.clean_domain(parse.netloc.lower(),
-                                             parse.scheme.lower())
-        if len(parse.path) > 0:
+
+        output = f"{parse.scheme.lower()}://"
+        output += Canonicalizer.clean_domain(
+            parse.netloc.lower(),
+            parse.scheme.lower()
+        )
+
+        if parse.path:
             output += Canonicalizer.clean_path(parse.path)
 
         return output
@@ -62,18 +67,19 @@ class Canonicalizer:
 
         comps = path.split('/')
         output = ''
-        for cmp in comps:
 
-            if len(cmp) > 0 and cmp != '/':
+        for cmp in comps:
+            if cmp and cmp != '/':
                 output += '/' + cmp
 
         return output
 
-def rchop(string, ending):
 
+def rchop(string, ending):
     if string.endswith(ending):
         return string[:-len(ending)]
     return string
 
 
+# Test
 print(Canonicalizer.get_domain("https://www.en.wikipedia.org/wiki/World_War_II"))

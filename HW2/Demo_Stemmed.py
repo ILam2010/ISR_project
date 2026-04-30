@@ -1,51 +1,77 @@
 from stemming.porter2 import stem
-import time
 from bs4 import BeautifulSoup
-import os
-import re
-import regex
-from collections import defaultdict
-from collections import OrderedDict
 import dill
 
-def unpickler(file):
-    f = open(file, 'rb')
-    ds = dill.load(f)
-    f.close()
-    return ds
 
+# ----------------------------
+# Unpickler
+# ----------------------------
+def unpickler(file):
+    with open(file, 'rb') as f:
+        return dill.load(f)
+
+
+# ----------------------------
+# Parse catalog file
+# ----------------------------
 def parseCatalog(file):
     catalog = {}
-    catalogFile = open(file, 'r')
-    for line in catalogFile.readlines():
-        content = line.strip().split(',')
-        catalog[content[0]] = content[1:]
+    with open(file, 'r') as catalogFile:
+        for line in catalogFile:
+            content = line.strip().split(',')
+            catalog[content[0]] = content[1:]
     return catalog
 
+
+# ----------------------------
+# Load structures
+# ----------------------------
 docInfo = unpickler('Files/Stemmed/Pickles/docInfo.p')
 catalog = parseCatalog('Files/Stemmed/catalogFile.txt')
 termMap = unpickler('Files/Stemmed/Pickles/termMap.p')
 docMap = unpickler('Files/Stemmed/Pickles/docMap.p')
 
+
+# ----------------------------
+# Files
+# ----------------------------
 inFile = open("in.0.50.txt", "r")
 indexFile = open("Files/Stemmed/invertedFile0.txt", "r")
 outFile = open("Files/out.0.stop.stem.txt", "a+")
-for line in inFile.readlines():
+
+# ----------------------------
+# Processing
+# ----------------------------
+for line in inFile:
     key = stem(line.strip())
-    keyId = str(termMap.get(key))
-    if keyId in catalog.keys():
-        offset = catalog[keyId][0]
-        length = catalog[keyId][1]
-        indexFile.seek(int(offset))
-        termLine = indexFile.read(int(length))
-        df = termLine.split(':')[0].split(',')[1]
-        ttf = termLine.split(':')[0].split(',')[2]
-        outLine = line.strip() + " " + df + " " + ttf+"\n"
-        outFile.write(outLine)
+    keyId = termMap.get(key)
+
+    if keyId is None:
+        outFile.write(line)
+        continue
+
+    keyId = str(keyId)
+
+    if keyId in catalog:
+        offset = int(catalog[keyId][0])
+        length = int(catalog[keyId][1])
+
+        indexFile.seek(offset)
+        termLine = indexFile.read(length)
+
+        parts = termLine.split(':')[0].split(',')
+
+        df = parts[1]
+        ttf = parts[2]
+
+        outFile.write(f"{line.strip()} {df} {ttf}\n")
     else:
         outFile.write(line)
 
+
+# ----------------------------
+# Close files
+# ----------------------------
 outFile.close()
 inFile.close()
 indexFile.close()
-

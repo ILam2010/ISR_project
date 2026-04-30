@@ -1,110 +1,93 @@
-from __future__ import division
-import string
-from stemming.porter2 import stem
-from string import digits
-import re
-import time
-from Stemmed_Stopwords_Removed_Index import TermVector
-from collections import OrderedDict
 import dill
+import re
+from collections import defaultdict
 
-def unpickler(file):
-    f = open(file, 'rb')
-    ds = dill.load(f)
-    f.close()
-    return ds
+# ----------------------------
+# Tokenizer
+# ----------------------------
+TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*")
 
-def parseCatalog(file):
-    catalog = {}
-    catalogFile = open(file, 'r')
-    for line in catalogFile.readlines():
-        content = line.strip().split(',')
-        catalog[content[0]] = content[1:]
-    return catalog
+def tokenize(text):
+    return TOKEN_PATTERN.findall(text.lower())
 
-def queryMaker():
-    f = open('ProximityQueryModel.txt', 'r')
-    queries = []
-    for line in f:
-        queries.append(re.sub('[\-\.\"\s]+', ' ', line).strip().translate(None, digits))
-    return queries
 
-def queryProcessor(query):
-    with open("/Users/Zion/Downloads/AP_DATA/stoplist.txt") as sfile:
-        stopWords = sfile.readlines()
-    stopWords = filter(None, stopWords)
-    keywords = ""
-    flag = 0
-    for word in query.split():
-        for sWord in stopWords:
-            if (word == sWord.strip()):
-                flag = 1
-                break
-        if (flag != 1):
-            keywords += word + " "
-        flag = 0
-    keywords = keywords.translate(None, string.punctuation)
-    return keywords.strip()
+# ----------------------------
+# Load data
+# ----------------------------
+print("Loading index files...")
 
-def getInfo(key, catalog, termMap, docMap):
-    keyInfo = OrderedDict()
-    invList = OrderedDict()
-    docDict = OrderedDict()
-    indexFile = open("Files/Stemmed/invertedFile0.txt", 'r')
-    keyId = str(termMap.get(key))
-    offset = catalog[keyId][0]
-    indexFile.seek(int(offset))
-    line = indexFile.readline()
-    df = line.split(':')[0].split(',')[1]
-    ttf = line.split(':')[0].split(',')[2]
-    keyInfo[key] = [df, ttf]
-    remStr = line.split(':')[1].split(';')
-    for item in remStr:
-        docno = item.split(',')[0]
-        docID = docMap.get(int(docno))
-        tf = int(item.split(',')[1])
-        pos = [int(e) for e in item.split(',')[2:len(item.split(','))]]
-        docDict[docID] = TermVector(tf, pos)
-    invList[key] = docDict
-    indexFile.close()
-    return invList, keyInfo
+term_map = dill.load(open("termMap.p", "rb"))
+doc_map = dill.load(open("docMap.p", "rb"))
+inverted_index = dill.load(open("inverted_index.p", "rb"))
 
-def getParameters(query, qNo):
-    keywords = queryProcessor(query)
-    termVector = OrderedDict()
-    termStats = OrderedDict()
-    for key in keywords.split():
+print("Files loaded successfully!")
 
-        key = stem(key.lower())
-        invList, keyInfo= getInfo(key, catalog, termMap, docMap)
-        termVector.update(invList)
-        termStats.update(keyInfo)
-    f = open('Files/Stemmed/Pickles/termStats_Proximity%s.p' % qNo, 'wb')
-    dill.dump(termStats, f)
-    f.close()
-    f = open('Files/Stemmed/Pickles/termVector_Proximity%s.p' % qNo, 'wb')
-    dill.dump(termVector, f)
-    f.close()
 
-start_time = time.time()
-docInfo = unpickler('Files/Stemmed/Pickles/docInfo.p')
-catalog = parseCatalog('Files/Stemmed/catalogFile.txt')
-termMap = unpickler('Files/Stemmed/Pickles/termMap.p')
-docMap = unpickler('Files/Stemmed/Pickles/docMap.p')
-# getInfo('govern', catalog, termMap, docMap)
-queries = queryMaker()
-qNo = 0
-for query in queries:
-    qNo += 1
-    #if(qNo == 7):
-    getParameters(query, qNo)
+# 🔥 FIX: create reverse map (IMPORTANT)
+reverse_doc_map = {v: k for k, v in doc_map.items()}
 
-    print("Created %d termVector" % qNo)
 
-temp = time.time() - start_time
-print(temp)
-hours = temp // 3600
-temp = temp - 3600 * hours
-minutes = temp // 60
-seconds = temp - 60 * minutes
-print('%d:%d:%d' % (hours, minutes, seconds))
+# ----------------------------
+# Query processor (TF-based ranking)
+# ----------------------------
+def process_query(query):
+
+    tokens = tokenize(query)
+    scores = defaultdict(int)
+
+    for token in tokens:
+
+        if token not in term_map:
+            continue
+
+        term_id = term_map[token]
+
+        if term_id not in inverted_index:
+            continue
+
+        postings = inverted_index[term_id]["postings"]
+
+        for p in postings:
+            doc_id = p["doc_id"]
+            tf = p["tf"]
+
+            scores[doc_id] += tf   # TF scoring
+
+    ranked_docs = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+    return ranked_docs
+
+
+# ----------------------------
+# Read cran.qry
+# ----------------------------
+query_file = "cran.qry"
+
+print("\nProcessing queries...\n")
+
+with open(query_file, "r", encoding="utf-8", errors="ignore") as f:
+    queries = f.readlines()
+
+query_id = 1
+
+for q in queries:
+
+    q = q.strip()
+
+    # skip Cranfield headers like .I, .W
+    if not q or q.startswith("."):
+        continue
+
+    print(f"Query {query_id}: {q}")
+
+    results = process_query(q)
+
+    print("Top results:")
+
+    for doc_id, score in results[:5]:
+
+        doc_name = reverse_doc_map.get(doc_id, str(doc_id))
+        print(f"  {doc_name} -> score {score}")
+
+    print("-" * 50)
+    query_id += 1
