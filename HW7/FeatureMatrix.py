@@ -1,190 +1,131 @@
-from elasticsearch_dsl import query, Search
 from elasticsearch import Elasticsearch
-import csv
+from elasticsearch_dsl import Search
+import pandas as pd
+import numpy as np
 import os
-from string import digits
-import string
-from enchant.tokenize import get_tokenizer
-import enchant
-from bs4 import BeautifulSoup
-import dill
-import time
-from nltk.corpus import stopwords
-import nltk
-
-es = Elasticsearch()
-featureMatrix = {}
-uniGrams = set()
-
-def getText(path):
-    prevDoc = []
-    for filename in os.listdir(path):
-        if (filename != '.DS_Store'):
-            print(filename)
-            file = open(path + filename, "r", encoding="ISO-8859-1")
-            page = file.read()
-            validPage = "<root>" + page + "</root>"
-            soup = BeautifulSoup(validPage, 'html.parser')
-            texts = soup.find_all('text')
-            text = ""
-            for txt in texts:
-                text += txt.get_text().strip()
-            if(len(uniGrams) < 200):
-                getTokens(text)
-            else:
-                break
-            # print(len(uniGrams))
-
-def getTokens(text):
-    tknzr = get_tokenizer("en_US")
-    words = [w[0].lower() for w in tknzr(text)]
-    getUnigrams(words)
-
-def getUnigrams(wrdList):
-    d = enchant.Dict("en_US")
-    for w in wrdList:
-        if d.check(w):
-            uniGrams.add(w)
+import warnings
+warnings.filterwarnings("ignore")
 
 
-def getAllDocIds():
-    s = Search().using(es).index('hw7_index').query("match_all")
-    docIDLabel = [(h.meta.id, h.label) for h in s.scan()]
-    return docIDLabel
+# =========================
+# ELASTICSEARCH CONNECTION
+# =========================
+es = Elasticsearch(
+    "https://localhost:9200",
+    basic_auth=("elastic", "1pmpURwe_KTV*f0UZdXR"),
+    verify_certs=False
+)
 
-def getDocScore(term):
-    s = Search().using(es).index('hw7_index').query("multi_match", query=term, fields=["text"])
-    s = s.extra(track_scores=True)
-    docInfo = [(h.meta.id, h.meta.score) for h in s.scan()]
-    return docInfo
+INDEX = "cranfield"
 
-def populateFeatureMatrix(nGramList):
-    colNames = []
-    i = len(nGramList)
-    for nGram in nGramList:
-        print("%d left out of %d" %(i, len(nGramList)))
-        i -= 1
-        nGram = nGram.strip()
-        colNames.append(nGram)
-        docInfo = getDocScore(nGram)
-        for docScorePair in docInfo:
-            featureMatrix[docScorePair[0]][nGram] = docScorePair[1]
-    return colNames
+# =========================
+# LOAD QRELS (GROUND TRUTH)
+# =========================
+def load_qrels(path):
+    qrels = {}
 
-def getNGrams(file):
-    with open(file, "r") as nGramFile:
-        colNames = populateFeatureMatrix(nGramFile.readlines())
-    nGramFile.close()
-    return colNames
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.split()
 
+            qid = parts[0]
+            docid = parts[1]
+            rel = int(parts[2])
 
-def createSparseMatrix(nGrams, filename, docIDLabel):
-    nGramLen = len(nGrams)
-    colNames = []
-    colNames += nGrams
-    colNames.append('Label')
-    colNames.insert(0, 'DocID')
-    with open(filename+'.csv', 'w') as csvfile:
-        filewriter = csv.writer(csvfile, delimiter=',', quoting=csv.QUOTE_NONE)
-        filewriter.writerow(colNames)
-        i = 0
-        for key, value in featureMatrix.items():
-            i += 1
-            print("%dth row created for DocID %s" %(i,key))
-            scores = [""] * nGramLen
-            row = []
-            for vvKey, vvValue in value.items():
-                    if vvKey in nGrams:
-                        scores[nGrams.index(vvKey)] = vvValue
-            row.append(key)
-            row += scores
-            row.append([item for item in docIDLabel if item[0] == key][0][1])
+            if qid not in qrels:
+                qrels[qid] = {}
+
+            # binary relevance
+            qrels[qid][docid] = 1 if rel > 0 else 0
+
+    return qrels
 
 
-                    # for id in featureMatrix:
-        #     i+=1
-        #     print("%dth row created for DocID %s" %(i,id))
-        #     scores = [""] * nGramLen
-        #     row = []
-        #     for label in featureMatrix[id]:
-        #         for wrd in featureMatrix[id][label]:
-        #             score = featureMatrix[id][label][wrd]
-        #             for colName in nGrams:
-        #                 if colName == wrd:
-        #                     scores[nGrams.index(colName)] = score
-        #         row.append(id)
-        #         row += scores
-        #         row.append(label)
-            filewriter.writerow(row)
-    csvfile.close()
+# =========================
+# SIMPLE FEATURE EXTRACTION
+# =========================
+def get_features(doc_id, query):
+    try:
+        res = es.get(index=INDEX, id=doc_id)
+        text = res["_source"]["body_text"]
 
-def removeStopWords(nGrams):
-    with open("/Users/Zion/Downloads/AP_DATA/stoplist.txt") as sfile:
-        stopWords = sfile.readlines()
-    stopWords = list(filter(None, stopWords))
-    keywords = list()
-    flag = 0
-    i = len(nGrams)
-    for word in nGrams:
-        # print("%d terms remaining out of %d" % (i, len(nGrams)))
-        i -= 1
-        for sWord in stopWords:
-            if (word.lower() == sWord.strip()):
-                flag = 1
-                break
-            elif len(word) < 2:
-                flag = 1
-                break
-        if (flag != 1):
-            keywords.append(word.lower())
-        flag = 0
-    with open("scratch.txt", "w") as s:
-        for k in keywords:
-            s.write(k + "\n")
-    s.close()
-    return keywords
+        doc_len = len(text.split())
+        score = len(set(query.split()) & set(text.split()))
 
-def generateNGrams(path):
-    getText(path)
-    f = open("Unigrams200.p", "wb")
-    dill.dump(uniGrams, f)
-    f.close()
+        return doc_len, score
 
-def fullFledged(path, docIDLabel):
-    generateNGrams(path)
-    # f = open('Unigrams.p', 'rb')
-    # uni = dill.load(f)
-    # f.close()
-    nGrams = list(uniGrams)
-    cleanNGrams = removeStopWords(nGrams)
-    # f = open('FeatureMatrix200.p', 'rb')
-    # NGrams = dill.load(f)
-    # f.close()
-    # cleanNGrams = removeStopWords(NGrams)
-    NGrams = populateFeatureMatrix(cleanNGrams)
-    f = open("FeatureMatrix200.p", "wb")
-    dill.dump(featureMatrix, f)
-    f.close()
-    createSparseMatrix(NGrams, "staticFeatureMatrixFull200", docIDLabel)
+    except Exception:
+        return 0, 0
 
+
+# =========================
+# BUILD FEATURE MATRIX
+# =========================
+def build_feature_matrix(qrels, queries):
+    rows = []
+
+    for qid, query in queries.items():
+
+        if qid not in qrels:
+            continue
+
+        for docid in qrels[qid]:
+
+            length, score = get_features(docid, query)
+
+            rows.append([
+                docid,
+                length,
+                score,
+                qrels[qid][docid]
+            ])
+
+    df = pd.DataFrame(rows, columns=["DocID", "Length", "Score", "Label"])
+    df.to_csv("feature_matrix.csv", index=False)
+
+    print("Feature matrix created:", df.shape)
+
+
+# =========================
+# LOAD QUERIES
+# =========================
+def load_queries(path):
+    queries = {}
+    current_id = None
+    current_text = []
+
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+
+            if line.startswith(".I"):
+                if current_id is not None:
+                    queries[str(current_id)] = " ".join(current_text)
+
+                current_id = line.split()[1]
+                current_text = []
+
+            elif not line.startswith(".W"):
+                current_text.append(line)
+
+        if current_id is not None:
+            queries[str(current_id)] = " ".join(current_text)
+
+    return queries
+
+
+# =========================
+# MAIN
+# =========================
 def main():
-    docIDLabel = getAllDocIds()
-    for idLabel in docIDLabel:
-        featureMatrix[idLabel[0]] = {}
-    # nGrams = getNGrams('manual.txt')
-    # createSparseMatrix(nGrams, "staticFeatureMatrixManual")
-    # nGrams = getNGrams('spam_words.txt')
-    # createSparseMatrix(nGrams, "staticFeatureMatrixGiven2", docIDLabel)
+    qrels_path = r"C:\Users\User\Information-Retrieval\cranqrel"
+   
+    query_path = r"C:\Users\User\Information-Retrieval\cran.qry"
 
-    fullFledged("Files/", docIDLabel)
+    qrels = load_qrels(qrels_path)
+    queries = load_queries(query_path)
+
+    build_feature_matrix(qrels, queries)
 
 
-start_time = time.time()
 main()
-temp = time.time()-start_time
-print(temp)
-hours = temp//3600
-temp = temp - 3600*hours
-minutes = temp//60
-seconds = temp - 60*minutes
-print('%d:%d:%d' %(hours,minutes,seconds))

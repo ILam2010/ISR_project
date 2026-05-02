@@ -1,42 +1,62 @@
-import time
 from elasticsearch import Elasticsearch
-from bs4 import BeautifulSoup
 import os
-import re
-from collections import Counter
-import dill
 
-es = Elasticsearch()
-path = "Files/"
-start_time = time.time()
-i = 0
-for filename in os.listdir(path):
-    if(filename != '.DS_Store'):
-        print(filename)
-        file = open(path+filename, "r", encoding="ISO-8859-1")
-        page = file.read()
-        validPage = "<root>" + page + "</root>"
-        soup = BeautifulSoup(validPage, 'html.parser')
-        i += 1
-        texts = soup.find_all('text')
-        labels = soup.find_all('label')
-        text = ""
-        label = ""
-        for txt in texts:
-            text += txt.get_text().strip()
-        for l in labels:
-            label += l.get_text().strip()
-        jsonDoc = {
-            'text': text,
-            'label': label
-        }
-        res = es.index(index="hw7_index", doc_type='document', id=soup.emailid.text.strip(), body=jsonDoc)
-        print("Indexed %d document" % i)
+es = Elasticsearch(
+    "https://localhost:9200",
+    basic_auth=("elastic", "1pmpURwe_KTV*f0UZdXR"),
+    verify_certs=False,
+    ssl_show_warn=False
+)
 
-temp = time.time() - start_time
-print(temp)
-hours = temp // 3600
-temp = temp - 3600 * hours
-minutes = temp // 60
-seconds = temp - 60 * minutes
-print('%d:%d:%d' % (hours, minutes, seconds))
+INDEX = "hw7_index"
+
+def parse_cranfield(path):
+    docs = {}
+    doc_id = None
+    text = []
+    in_text = False
+
+    with open(path, 'r', encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+
+            if line.startswith(".I"):
+                if doc_id:
+                    docs[doc_id] = " ".join(text)
+                doc_id = line.split()[1]
+                text = []
+                in_text = False
+
+            elif line.startswith(".W"):
+                in_text = True
+
+            elif line.startswith(".T") or line.startswith(".A") or line.startswith(".B"):
+                in_text = False
+
+            elif in_text:
+                text.append(line)
+
+        if doc_id:
+            docs[doc_id] = " ".join(text)
+
+    return docs
+
+
+def index_docs():
+    docs = parse_cranfield(r"C:\Users\User\Information-Retrieval\cran.all.1400")
+
+
+    for doc_id, text in docs.items():
+        es.index(
+            index=INDEX,
+            id=doc_id,
+            document={
+                "text": text,
+                "label": "doc"
+            }
+        )
+        print(f"Indexed {doc_id}")
+
+
+if __name__ == "__main__":
+    index_docs()
